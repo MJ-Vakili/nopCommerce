@@ -699,8 +699,9 @@ namespace Nop.Web.Infrastructure
 
             //sitemap (XML)
             routes.MapLocalizedRoute("sitemap.xml",
-                            "sitemap.xml",
-                            new { controller = "Common", action = "SitemapXml" },
+                            "sitemap.xml/{Id}",
+                            new { controller = "Common", action = "SitemapXml", Id = UrlParameter.Optional },
+                            new { Id = @"\d*" },
                             new[] { "Nop.Web.Controllers" });
 
             //store closed

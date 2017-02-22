@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -21,6 +22,17 @@ namespace Nop.Services.Seo
     /// </summary>
     public partial class SitemapGenerator : ISitemapGenerator
     {
+        #region Constants
+
+        private const string DateFormat = @"yyyy-MM-dd";
+
+        /// <summary>
+        /// At now each provided sitemap file must have no more than 50000 URLs
+        /// </summary>
+        private const int maxSitemapUrlNumber = 50000;
+
+        #endregion
+
         #region Fields
 
         private readonly IStoreContext _storeContext;
@@ -35,7 +47,6 @@ namespace Nop.Services.Seo
         private readonly ForumSettings _forumSettings;
         private readonly SecuritySettings _securitySettings;
 
-        private const string DateFormat = @"yyyy-MM-dd";
         private XmlTextWriter _writer;
 
         #endregion
@@ -69,14 +80,50 @@ namespace Nop.Services.Seo
 
         #endregion
 
+        #region Nested class
+
+        /// <summary>
+        /// Represents sitemap URL entry
+        /// </summary>
+        protected class SitemapUrl
+        {
+            public SitemapUrl(string location, UpdateFrequency frequency, DateTime updatedOn)
+            {
+                Location = location;
+                UpdateFrequency = frequency;
+                UpdatedOn = updatedOn;
+            }
+
+            /// <summary>
+            /// Gets or sets URL of the page
+            /// </summary>
+            public string Location { get; set; }
+
+            /// <summary>
+            /// Gets or sets a value indicating how frequently the page is likely to change
+            /// </summary>
+            public UpdateFrequency UpdateFrequency { get; set; }
+
+            /// <summary>
+            /// Gets or sets the date of last modification of the file
+            /// </summary>
+            public DateTime UpdatedOn { get; set; }
+        }
+
+        #endregion
+
         #region Utilities
 
+        /// <summary>
+        /// Get HTTP protocol
+        /// </summary>
+        /// <returns>Protocol name as string</returns>
         protected virtual string GetHttpProtocol()
         {
             return _securitySettings.ForceSslForAllPages ? "https" : "http";
         }
 
-    /// <summary>
+        /// <summary>
         /// Writes the url location to the writer.
         /// </summary>
         /// <param name="url">Url of indexed location (don't put root url information in).</param>
@@ -93,116 +140,147 @@ namespace Nop.Services.Seo
         }
 
         /// <summary>
-        /// Method that is overridden, that handles creation of child urls.
-        /// Use the method WriteUrlLocation() within this method.
+        /// Generate URLs for the sitemap
         /// </summary>
         /// <param name="urlHelper">URL helper</param>
-        protected virtual void GenerateUrlNodes(UrlHelper urlHelper)
+        /// <returns>List of URL for the sitemap</returns>
+        protected virtual IList<SitemapUrl> GenerateUrls(UrlHelper urlHelper)
         {
+            var sitemapUrls = new List<SitemapUrl>();
+
             //home page
             var homePageUrl = urlHelper.RouteUrl("HomePage", null, GetHttpProtocol());
-            WriteUrlLocation(homePageUrl, UpdateFrequency.Weekly, DateTime.UtcNow);
+            sitemapUrls.Add(new SitemapUrl(homePageUrl, UpdateFrequency.Weekly, DateTime.UtcNow));
+
             //search products
             var productSearchUrl = urlHelper.RouteUrl("ProductSearch", null, GetHttpProtocol());
-            WriteUrlLocation(productSearchUrl, UpdateFrequency.Weekly, DateTime.UtcNow);
+            sitemapUrls.Add(new SitemapUrl(productSearchUrl, UpdateFrequency.Weekly, DateTime.UtcNow));
+
             //contact us
             var contactUsUrl = urlHelper.RouteUrl("ContactUs", null, GetHttpProtocol());
-            WriteUrlLocation(contactUsUrl, UpdateFrequency.Weekly, DateTime.UtcNow);
+            sitemapUrls.Add(new SitemapUrl(contactUsUrl, UpdateFrequency.Weekly, DateTime.UtcNow));
+
             //news
             if (_newsSettings.Enabled)
             {
                 var url = urlHelper.RouteUrl("NewsArchive", null, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, DateTime.UtcNow);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, DateTime.UtcNow));
             }
+
             //blog
             if (_blogSettings.Enabled)
             {
                 var url = urlHelper.RouteUrl("Blog", null, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, DateTime.UtcNow);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, DateTime.UtcNow));
             }
+
             //blog
             if (_forumSettings.ForumsEnabled)
             {
                 var url = urlHelper.RouteUrl("Boards", null, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, DateTime.UtcNow);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, DateTime.UtcNow));
             }
+
             //categories
             if (_commonSettings.SitemapIncludeCategories)
-            {
-                WriteCategories(urlHelper, 0);
-            }
+                WriteCategories(urlHelper, sitemapUrls, 0);
+
             //manufacturers
             if (_commonSettings.SitemapIncludeManufacturers)
-            {
-                WriteManufacturers(urlHelper);
-            }
+                WriteManufacturers(urlHelper, sitemapUrls);
+
             //products
             if (_commonSettings.SitemapIncludeProducts)
-            {
-                WriteProducts(urlHelper);
-            }
+                WriteProducts(urlHelper, sitemapUrls);
+
             //topics
-            WriteTopics(urlHelper);
+            WriteTopics(urlHelper, sitemapUrls);
+
             //custom URLs
-            WriteCustomUrls();
+            WriteCustomUrls(sitemapUrls);
+
+            return sitemapUrls;
         }
 
-        protected virtual void WriteCategories(UrlHelper urlHelper, int parentCategoryId)
+        /// <summary>
+        /// Write category URLs to sitemap
+        /// </summary>
+        /// <param name="urlHelper">URL helper</param>
+        /// <param name="sitemapUrls">Current list of URL</param>
+        /// <param name="parentCategoryId">Parent category identifier</param>
+        protected virtual void WriteCategories(UrlHelper urlHelper, List<SitemapUrl> sitemapUrls, int parentCategoryId)
         {
             var categories = _categoryService.GetAllCategoriesByParentCategoryId(parentCategoryId);
             foreach (var category in categories)
             {
                 var url = urlHelper.RouteUrl("Category", new { SeName = category.GetSeName() }, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, category.UpdatedOnUtc);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, category.UpdatedOnUtc));
 
-                WriteCategories(urlHelper, category.Id);
+                WriteCategories(urlHelper, sitemapUrls, category.Id);
             }
         }
 
-        protected virtual void WriteManufacturers(UrlHelper urlHelper)
+        /// <summary>
+        /// Write manufacturer URLs to sitemap
+        /// </summary>
+        /// <param name="urlHelper">URL helper</param>
+        /// <param name="sitemapUrls">Current list of URL</param>
+        protected virtual void WriteManufacturers(UrlHelper urlHelper, List<SitemapUrl> sitemapUrls)
         {
             var manufacturers = _manufacturerService.GetAllManufacturers(storeId: _storeContext.CurrentStore.Id);
             foreach (var manufacturer in manufacturers)
             {
                 var url = urlHelper.RouteUrl("Manufacturer", new { SeName = manufacturer.GetSeName() }, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, manufacturer.UpdatedOnUtc);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, manufacturer.UpdatedOnUtc));
             }
         }
 
-        protected virtual void WriteProducts(UrlHelper urlHelper)
+        /// <summary>
+        /// Write product URLs to sitemap
+        /// </summary>
+        /// <param name="urlHelper">URL helper</param>
+        /// <param name="sitemapUrls">Current list of URL</param>
+        protected virtual void WriteProducts(UrlHelper urlHelper, List<SitemapUrl> sitemapUrls)
         {
             var products = _productService.SearchProducts(
                 storeId: _storeContext.CurrentStore.Id,
                 visibleIndividuallyOnly: true,
                 orderBy: ProductSortingEnum.CreatedOn);
+
             foreach (var product in products)
             {
                 var url = urlHelper.RouteUrl("Product", new { SeName = product.GetSeName() }, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, product.UpdatedOnUtc);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, product.UpdatedOnUtc));
             }
         }
 
-        protected virtual void WriteTopics(UrlHelper urlHelper)
+        /// <summary>
+        /// Write topic URLs to sitemap
+        /// </summary>
+        /// <param name="urlHelper">URL helper</param>
+        /// <param name="sitemapUrls">Current list of URL</param>
+        protected virtual void WriteTopics(UrlHelper urlHelper, List<SitemapUrl> sitemapUrls)
         {
-            var topics = _topicService.GetAllTopics(_storeContext.CurrentStore.Id)
-                .Where(t => t.IncludeInSitemap)
-                .ToList();
+            var topics = _topicService.GetAllTopics(_storeContext.CurrentStore.Id).Where(t => t.IncludeInSitemap).ToList();
             foreach (var topic in topics)
             {
                 var url = urlHelper.RouteUrl("Topic", new { SeName = topic.GetSeName() }, GetHttpProtocol());
-                WriteUrlLocation(url, UpdateFrequency.Weekly, DateTime.UtcNow);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, DateTime.UtcNow));
             }
         }
 
-        protected virtual void WriteCustomUrls()
+        /// <summary>
+        /// Write custom URLs to sitemap
+        /// </summary>
+        /// <param name="sitemapUrls">Current list of URL</param>
+        protected virtual void WriteCustomUrls(List<SitemapUrl> sitemapUrls)
         {
             foreach (var customUrl in _commonSettings.SitemapCustomUrls)
             {
                 var url = _webHelper.GetStoreLocation() + customUrl;
-                WriteUrlLocation(url, UpdateFrequency.Weekly, DateTime.UtcNow);
+                sitemapUrls.Add(new SitemapUrl(url, UpdateFrequency.Weekly, DateTime.UtcNow));
             }
         }
-        
 
         #endregion
 
@@ -213,12 +291,13 @@ namespace Nop.Services.Seo
         /// See http://en.wikipedia.org/wiki/Sitemaps for more information.
         /// </summary>
         /// <param name="urlHelper">URL helper</param>
+        /// <param name="id">Sitemap identifier</param>
         /// <returns>Sitemap.xml as string</returns>
-        public virtual string Generate(UrlHelper urlHelper)
+        public virtual string Generate(UrlHelper urlHelper, int? id)
         {
             using (var stream = new MemoryStream())
             {
-                Generate(urlHelper, stream);
+                Generate(urlHelper, stream, id);
                 return Encoding.UTF8.GetString(stream.ToArray());
             }
         }
@@ -228,21 +307,62 @@ namespace Nop.Services.Seo
         /// See http://en.wikipedia.org/wiki/Sitemaps for more information.
         /// </summary>
         /// <param name="urlHelper">URL helper</param>
+        /// <param name="id">Sitemap identifier</param>
         /// <param name="stream">Stream of sitemap.</param>
-        public virtual void Generate(UrlHelper urlHelper, Stream stream)
+        public virtual void Generate(UrlHelper urlHelper, Stream stream, int? id)
         {
-            using (_writer = new XmlTextWriter(stream, Encoding.UTF8))
+            //get all URLs for sitemap
+            var sitemapUrls = GenerateUrls(urlHelper);
+
+            //split URLs into separate lists based on the max size 
+            var sitemaps = sitemapUrls.Select((url, index) => new { Index = index, Value = url })
+                .GroupBy(group => group.Index / maxSitemapUrlNumber).Select(group => group.Select(url => url.Value).ToList()).ToList();
+
+            if (!id.HasValue || id.Value == 0 || id.Value > sitemaps.Count)
             {
-                _writer.Formatting = Formatting.Indented;
-                _writer.WriteStartDocument();
-                _writer.WriteStartElement("urlset");
-                _writer.WriteAttributeString("xmlns", "http://www.sitemaps.org/schemas/sitemap/0.9");
-                _writer.WriteAttributeString("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
-                _writer.WriteAttributeString("xsi:schemaLocation", "http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd");
+                //return a sitemap index file
+                using (_writer = new XmlTextWriter(stream, Encoding.UTF8))
+                {
+                    _writer.Formatting = Formatting.Indented;
+                    _writer.WriteStartDocument();
+                    _writer.WriteStartElement("sitemapindex");
+                    _writer.WriteAttributeString("xmlns", "http://www.sitemaps.org/schemas/sitemap/0.9");
+                    _writer.WriteAttributeString("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                    _writer.WriteAttributeString("xsi:schemaLocation", "http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd");
 
-                GenerateUrlNodes(urlHelper);
+                    //write URLs of all available sitemaps
+                    foreach (var sitemap in sitemaps)
+                    {
+                        var url = urlHelper.RouteUrl("sitemap.xml", new { Id = (sitemaps.IndexOf(sitemap) + 1) }, GetHttpProtocol());    
+                        var location = XmlHelper.XmlEncode(url);
 
-                _writer.WriteEndElement();
+                        _writer.WriteStartElement("sitemap");
+                        _writer.WriteElementString("loc", location);
+                        _writer.WriteElementString("lastmod", DateTime.UtcNow.ToString(DateFormat));
+                        _writer.WriteEndElement();
+                    }
+
+                    _writer.WriteEndElement();
+                }
+            }
+            else
+            {
+                //return a certain numbered sitemap file
+                using (_writer = new XmlTextWriter(stream, Encoding.UTF8))
+                {
+                    _writer.Formatting = Formatting.Indented;
+                    _writer.WriteStartDocument();
+                    _writer.WriteStartElement("urlset");
+                    _writer.WriteAttributeString("xmlns", "http://www.sitemaps.org/schemas/sitemap/0.9");
+                    _writer.WriteAttributeString("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                    _writer.WriteAttributeString("xsi:schemaLocation", "http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd");
+
+                    //write URLs from list to sitemap
+                    foreach (var url in sitemaps.ElementAt(id.Value - 1))
+                        WriteUrlLocation(url.Location, url.UpdateFrequency, url.UpdatedOn);
+
+                    _writer.WriteEndElement();
+                }
             }
         }
 
